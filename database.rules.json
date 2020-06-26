@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "Section": {
+      ".indexOn": ["uId"]
+    },
+    
+    ".read": true,
+    ".write": true
+  }
+}
