@@ -24,7 +24,7 @@ admin.initializeApp({
 const db = admin.database();
 
 
-const perfessor_permission = (req, res, next) => {
+const professor_permission = (req, res, next) => {
   if (req.headers.token === undefined) {
     return res.status(401).json({ message: "Please insert token" })
   }
@@ -34,11 +34,9 @@ const perfessor_permission = (req, res, next) => {
     admin.auth().verifyIdToken(token).then(async claim => {
       if (claim.professor === true) {
         req.uid = claim.user_id;
-        await db.ref('User').child(claim.user_id).once('value')
-        .then(resp => {
-          id = resp.val().uId;
-        })
-        req.uid = id;
+        const resp = await db.ref('User').child(claim.user_id).once('value')
+        let id = resp.val().uId
+        req.id = id;
         next()
       }
       else {
@@ -56,56 +54,80 @@ app.get('/getClass', async (req, res) => {
   const classes = []
 
 })
-app.get('/getSection', perfessor_permission, async (req, res) => {
-  let scanner = []
-  try {
-    const scanner_db = db.ref('/Scanner')
-    const snapshot_scanner = await scanner_db.once('value')
-    
-    snapshot_scanner.forEach(doc => {
-      scanner.push({
-        scId: doc.val().scId,
-        uId: doc.val().uId
+// app.get('/getScannerID',professor_permission ,async (req,res) => { 
+//   const scanner = []
+//   const scanner_db = db.ref('/Scanner')
+//   const snapshot_scanner = await scanner_db.once('value')
+//   let p = [];
+//   snapshot_scanner.forEach(doc => {
+//     if()
+//   })
 
-      });
+
+// })
+
+
+
+app.get('/getSection', professor_permission, async (req, res) => {
+  try{
+    let section = [];
+    const sections = await db.ref('/Section').once('value');
+  
+    sections.forEach(d => {
+      section.push({
+        id: d.key,
+        subject: d.val().subject,
+        sId: d.val().sId,
+        sectionNumber: d.val().sectionNumber,
+        scId: d.val().scId,
+        uId: d.val().uId,
+        room:d.val().room
+      })
     })
-    const response = []
-    db.ref('/Section').once('value')
-      .then(result => {
-        result.forEach(doc => {
-          scanner.forEach(row_scanner => {
-            if (row_scanner.uId === req.uid && doc.val().uId === req.uid  && row_scanner.scId === doc.val().scId) {
-              response.push({
-                subject: doc.val().subject,
-                sId: doc.val().sId,
-                sectionNumber: doc.val().sectionNumber,
-                scId: row_scanner.scId
-              })
-            }
+
+    console.log(section)
+    console.log(req.id)
+    let arr = [];
+    for (let i = 0; i < section.length; i++) {
+      if (section[i].uId === req.id) {
+        if (section[i].scId !== "") {
+          arr.push({
+            id: section[i].id,
+            subject: section[i].subject,
+            sId: section[i].sId,
+            sectionNumber: section[i].sectionNumber,
+            scId: section[i].scId,
+            uId: section[i].uId,
+            room: section[i].room
           })
-        })
-        return res.status(200).json({
-          message: "OK",
-          data : response
-        })
-      })
-      .catch(err => {
-        return res.json({
-          message: err.message
-        })
-      })
-
-
-   
+        }
+        else{
+          arr.push({
+            id: section[i].id,
+            subject: section[i].subject,
+            sId: section[i].sId,
+            sectionNumber: section[i].sectionNumber,
+            scId: "เชื่อม",
+            uId: section[i].uId,
+            room: section[i].room
+          })
+        }
+      }
+    }
+  
+    return res.status(200).json({
+      message:"Get Success",
+      data : arr
+    })
   }
-  catch (err) {
+  catch(err){
     return res.status(500).json({
       message: err.message
     })
   }
-
-
 })
+
+
 app.get('/getScanner', async (req, res) => {
   const scanner = []
   const scanner_db = db.ref('/Scanner')
@@ -145,7 +167,6 @@ app.get('/getScanner', async (req, res) => {
     })
   })
 
-  
   // console.log("Users", user);
 
   const scan = []
