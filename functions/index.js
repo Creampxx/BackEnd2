@@ -851,7 +851,14 @@ app.get('/getAttandaceByStudent/:id', nisit_permission, async (req, res) => {
 
   const student_data = await db.ref('/User').orderByChild('uId').equalTo(req.id).once('value');
   const sections = await db.ref('/Section').child(section_id).once('value');
+  const user_id = sections.val().uId;
+  const user =await db.ref('/User').orderByChild('uId').equalTo(user_id).once('value');
   const student = [];
+  let teachername;
+  user.forEach(row =>{
+    teachername = row.val().name + " " + row.val().surname
+  })
+ 
 
   student_data.forEach(row => {
     student.push({
@@ -950,6 +957,8 @@ app.get('/getAttandaceByStudent/:id', nisit_permission, async (req, res) => {
         sId: sections.val().sId,
         scId: sections.val().scId,
         sectionNumber: sections.val().sectionNumber,
+        teachername:teachername,
+        uId:sections.val().uId,
         subject: sections.val().subject,
         timelate: sections.val().timelate,
         timetable: sections.val().timetable,
@@ -1167,178 +1176,121 @@ app.get('/export/:id', async (req, res) => {
   }
 })
 
-app.post('/Attandance', async (req, res) => {
-  const zone = "Asia/Bangkok";
-  
-  try{
-  const checkTime = moment(new Date()).tz(zone).format('X');
-  const classForSection = await db.ref('/Attendance').orderByChild('class_id').equalTo(req.body.class_id).once('value')
 
-  let exists;
-  classForSection.forEach(row => {
-    if (row.val().fId == req.body.fId) {
-      exists = true;
-    }
-  })
-  if (exists) {
-    return res.status(500).json({
-      message: "ไม่สามารถเชคได้ เนื่องจาก นิสิตคนนี้เชคชื่อเรียบร้อยแล้ว"
-    })
-  }
-  else {
-    const classes = await db.ref('/Class').child(req.body.class_id).once('value');
-    const section_id = classes.val().sectionID;
-    let open_time = Number(classes.val().dateTime);
-    await db.ref('/Section').child(section_id).once('value')
-      .then(async sections => {
-        let timelate = Number(sections.val().timelate);
-        let timelost = 60;
-        let time = moment.unix(open_time)
-        let diff = moment(time, "DD/MM/YYYY HH:mm:ss").diff(moment(new Date(), "DD/MM/YYYY HH:mm:ss"));
-        
-        const d = moment.duration(Math.abs(diff));
-        const minutes = (d.hours() * 60) + d.minutes();
 
-        if (Number(minutes) < timelate) {
-          await db.ref('/Attendance').push({
-            fId: Number(req.body.fId),
-            scId: req.body.scId,
-            class_id: req.body.class_id,
-            checkTime: checkTime,
-            status: "ONTIME"
-          })
-        }
-        else {
-          await db.ref('/Attendance').push({
-            fId: Number(req.body.fId),
-            scId: req.body.scId,
-            class_id: req.body.class_id,
-            checkTime: checkTime,
-            status: "LATE"
-          })
-        }
-        return res.status(201).json({
-          message:"Attandance Success",
-          status:{
-            dataStatus:"SUCCESS"
-          }
-        })
-      })
-  }
-}catch(err){
-  return res.status(500).json({
-    message:err.message,
-    status:{
-      dataStatus:"FAILURE"
-    }
-  })
-}
+// app.get('/getAttandaceByStudent/:id', nisit_permission, async (req, res) => {
 
-})
+//   const section_id = req.params.id;
 
-app.get('/getAttandaceByStudent/:id', nisit_permission, async (req, res) => {
+//   const student_data = await db.ref('/User').orderByChild('uId').equalTo(req.id).once('value');
+//   const sections = await db.ref('/Section').child(section_id).once('value');
+//   const user =await db.ref('/User').orderByChild('uId').equalTo(req.uId).once('value');
+//   const student = [];
+//   let teachername;
 
-  const section_id = req.params.id;
+//   user.forEach(row =>{
+//    teachername = row.val().name + " " + row.val().surname
+//  })
 
-  const student_data = await db.ref('/User').orderByChild('uId').equalTo(req.id).once('value');
-  const sections = await db.ref('/Section').child(section_id).once('value');
-  const student = [];
+//   student_data.forEach(row => {
+//     student.push({
+//       uId: row.val().uId,
+//       name: row.val().name + " " + row.val().surname
+//     })
+//   })
 
-  student_data.forEach(row => {
-    student.push({
-      uId: row.val().uId,
-      name: row.val().name + " " + row.val().surname
-    })
-  })
+//   const list_class = await db.ref('/Class').orderByChild('sectionID').equalTo(section_id).once('value');
+//   const classBySection = [];
 
-  const list_class = await db.ref('/Class').orderByChild('sectionID').equalTo(section_id).once('value');
-  const classBySection = [];
+//   list_class.forEach(row_class => {
+//     let date = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('DD/MM/YYYY HH:mm')
+//     classBySection.push({
+//       id: row_class.key,
+//       date: date
+//     })
+//   })
 
-  list_class.forEach(row_class => {
-    let date = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('DD/MM/YYYY HH:mm')
-    classBySection.push({
-      id: row_class.key,
-      date: date
-    })
-  })
+//   let fingerPrint = [];
+//   const user_fingerprint = await db.ref('/Fingerprint').once('value');
 
-  let fingerPrint = [];
-  const user_fingerprint = await db.ref('/Fingerprint').once('value');
+//   user_fingerprint.forEach(row => {
+//     fingerPrint.push({
+//       fId: Number(row.val().fId),
+//       uId: row.val().uId
+//     })
+//   })
 
-  user_fingerprint.forEach(row => {
-    fingerPrint.push({
-      fId: Number(row.val().fId),
-      uId: row.val().uId
-    })
-  })
+//   const filterStudent = student.filter(st => {
+//     return fingerPrint.some(f => {
+//       if (f.uId === st.uId) {
+//         st.fId = f.fId;
+//         return st;
+//       }
+//     })
+//   })
 
-  const filterStudent = student.filter(st => {
-    return fingerPrint.some(f => {
-      if (f.uId === st.uId) {
-        st.fId = f.fId;
-        return st;
-      }
-    })
-  })
+//   let r = [];
+//   let class_attendance = [];
+//   classBySection.forEach(row_class => {
+//     let date = row_class.date;
+//     let class_id = row_class.id;
+//     r.push(db.ref('/Attendance').orderByChild('class_id').equalTo(row_class.id).once('value')
+//       .then(class_attan => {
+//         class_attan.forEach(row => {
+//           class_attendance.push({
+//             id: row.key,
+//             class_id: class_id,
+//             checktime: row.val().checkTime,
+//             fId: Number(row.val().fId),
+//             open_time: date,
+//             status: row.val().status
+//           })
+//         })
+//       }));
+//   })
 
-  let r = [];
-  let class_attendance = [];
-  classBySection.forEach(row_class => {
-    let date = row_class.date;
-    let class_id = row_class.id;
-    r.push(db.ref('/Attendance').orderByChild('class_id').equalTo(row_class.id).once('value')
-      .then(class_attan => {
-        class_attan.forEach(row => {
-          class_attendance.push({
-            id: row.key,
-            class_id: class_id,
-            checktime: row.val().checkTime,
-            fId: Number(row.val().fId),
-            open_time: date,
-            status: row.val().status
-          })
-        })
-      }));
-  })
+//   await Promise.all(r);
+//   // console.log(class_attendance)
+//   let final = [];
 
-  await Promise.all(r);
-  // console.log(class_attendance)
-  let final = [];
+//   const attan = class_attendance.filter(attan => {
+//     return filterStudent.filter(f => {
+//       if (f.fId === attan.fId) {
+//         let class_date = attan.open_time
+//         let checkInTime = moment.unix(attan.checktime).format('HH:mm');
+//         final.push({
+//           uId: f.uId,
+//           name: f.name,
+//           date: class_date,
+//           time: checkInTime,
+//           status: attan.status
+//         })
+//       }
+//       return;
+//     })
+//   })
 
-  const attan = class_attendance.filter(attan => {
-    return filterStudent.filter(f => {
-      if (f.fId === attan.fId) {
-        let class_date = attan.open_time
-        let checkInTime = moment.unix(attan.checktime).format('HH:mm');
-        final.push({
-          uId: f.uId,
-          name: f.name,
-          date: class_date,
-          time: checkInTime,
-          status: attan.status
-        })
-      }
-      return;
-    })
-  })
+//   return res.status(200).json({
+//     message: "Get Success",
+//     data: {
+//       sections: {
+//         room: sections.val().room,
+//         sId: sections.val().sId,
+//         scId: sections.val().scId,
+//         sectionNumber: sections.val().sectionNumber,
+//         subject: sections.val().subject,
+//         timelate: sections.val().timelate,
+//         timetable: sections.val().timetable,
+//       },
+//       classes: classBySection,
+//       student: final
+//     }
+//   })
+// })
 
-  return res.status(200).json({
-    message: "Get Success",
-    data: {
-      sections: {
-        room: sections.val().room,
-        sId: sections.val().sId,
-        scId: sections.val().scId,
-        sectionNumber: sections.val().sectionNumber,
-        subject: sections.val().subject,
-        timelate: sections.val().timelate,
-        timetable: sections.val().timetable,
-      },
-      classes: classBySection,
-      student: final
-    }
-  })
-})
+
+
+
 
 
 // API สำหรับอุปกรณ์ตอนเปิด Class
@@ -1418,6 +1370,110 @@ app.post('/OpenClass', async (req, res) => {
       dataStatus: "SUCCESS"
     }
   })
+})
+
+
+// API สำหรับอุปกรณ์ในการเช็คชื่อ 
+app.post('/Attandance', async (req, res) => {
+  const zone = "Asia/Bangkok";
+  try {
+    const checkTime = moment(new Date()).tz(zone).format('X');
+    const classForSection = await db.ref('/Attendance').orderByChild('class_id').equalTo(req.body.class_id).once('value')
+    let result = [];
+    classForSection.forEach(row => {
+      if (row.val().fId == req.body.fId) {
+        result.push({
+          id: row.key,
+          checkTime: row.val().checkTime,
+          class_id: row.val().class_id,
+          fId: row.val().fId,
+          status: row.val().status
+        })
+      }
+    })
+    const classes = await db.ref('/Class').child(req.body.class_id).once('value');
+    let open_time = Number(classes.val().dateTime);
+    let section_id = classes.val().sectionID;
+    await db.ref('/Section').child(section_id).once('value')
+      .then(async sections => {
+        let timelate = sections.val().timelate;
+        let time = moment.unix(open_time)
+        let diff = moment(time, "DD/MM/YYYY HH:mm:ss").diff(moment(new Date(), "DD/MM/YYYY HH:mm:ss"));
+        const d = moment.duration(Math.abs(diff));
+        const minutes = (d.hours() * 60) + d.minutes();
+        console.log(minutes)
+        console.log(timelate)
+        result.forEach(row => {
+          if (minutes < timelate) {
+            db.ref('/Attendance').child(row.id).update({
+              checkTime: checkTime,
+              status: "ONTIME"
+            })
+          }
+          else {
+            db.ref('/Attendance').child(row.id).update({
+              class_id: req.body.class_id,
+              checkTime: checkTime,
+              status: "LATE"
+            })
+          }
+        })
+        return res.status(201).json({
+          message: "Attandance Success",
+          status: {
+            dataStatus: "SUCCESS"
+          }
+        })
+      })
+    // if (exists) {
+    //   return res.status(500).json({
+    //     message: "ไม่สามารถเชคได้ เนื่องจาก นิสิตคนนี้เชคชื่อเรียบร้อยแล้ว"
+    //   })
+    // }
+    // else {
+
+    // const section_id = classes.val().sectionID;
+    // let open_time = Number(classes.val().dateTime);
+    // await db.ref('/Section').child(section_id).once('value')
+    //   .then(async sections => {
+    //     let timelate = sections.val().timelate;
+    //     let time = moment.unix(open_time)
+    //     let diff = moment(time, "DD/MM/YYYY HH:mm:ss").diff(moment(new Date(), "DD/MM/YYYY HH:mm:ss"));
+    //     const d = moment.duration(Math.abs(diff));
+    //     const minutes = (d.hours() * 60) + d.minutes();
+    //     if (minutes < timelate) {
+    //       await db.ref('/Attendance').push({
+    //         fId: Number(req.body.fId),
+    //         scId: req.body.scId,
+    //         class_id: req.body.class_id,
+    //         checkTime: checkTime,
+    //         status: "ONTIME"
+    //       })
+    //     }
+    //     else {
+    //       await db.ref('/Attendance').push({
+    //         fId: Number(req.body.fId),
+    //         scId: req.body.scId,
+    //         class_id: req.body.class_id,
+    //         checkTime: checkTime,
+    //         status: "LATE"
+    //       })
+    //     }
+    //     return res.status(201).json({
+    //       message:"Attandance Success",
+    //       status:{
+    //         dataStatus:"SUCCESS"
+    //       }
+    //     })
+    //   })
+  } catch (err) {
+    return res.status(500).json({
+      message: err.message,
+      status: {
+        dataStatus: "FAILURE"
+      }
+    })
+  }
 })
 
 exports.api = functions.https.onRequest(app)
