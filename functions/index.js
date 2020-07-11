@@ -6,6 +6,7 @@ const bodyParser = require('body-parser');
 const firebase = new FirebaseAuth(config.apikey);
 var serviceAccount = require("./service_account.json");
 const moment = require('moment-timezone');
+const {exportXls} = require('./export/func');
 
 const express = require('express')
 const app = express()
@@ -654,6 +655,7 @@ app.get('/getSectionforStudent',nisit_permission,async (req,res) => {
            if(row_section.key === row_regis.sId){
               section_data.push({
                 id : row_regis.id,
+                secid: row_section.key,
                 section_id : row_section.val().sId,
                 room: row_section.val().room,
                 sectionNumber : row_section.val().sectionNumber,
@@ -664,9 +666,9 @@ app.get('/getSectionforStudent',nisit_permission,async (req,res) => {
            }
          })
        })
-
        console.log(section_data)
      })
+
 
      return res.status(200).json({
        message:"Get Data Success",
@@ -689,16 +691,311 @@ app.get('/getAttandace/:id', async (req, res) => {
     const promise = [];
 
     list_class.forEach(row_class => {
-      let date = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('DD/MM/YYYY')
-      let time = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('HH:mm');
+      let date = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('DD/MM/YYYY HH:mm')
       classBySection.push({
         id: row_class.key,
-        date: date,
-        time:time
+        date: date
       })
     })
 
     const user = [];
+    await db.ref('/Regis').orderByChild('sId').equalTo(section_id)
+      .once('value')
+      .then((registration) => {
+        registration.forEach(row => {
+          promise.push(db.ref('/User').orderByChild('uId').equalTo(row.val().uId).once('value')
+            .then(users => {
+              users.forEach(row_user => {
+                user.push({
+                  id: row_user.key,
+                  name: row_user.val().name,
+                  surname: row_user.val().surname,
+                  uId: row_user.val().uId
+                })
+              })
+            }))
+        })
+      })
+
+    await Promise.all(promise).catch(err => { console.log(err.message) });
+    const fingerPrint = [];
+    const user_fingerprint = await db.ref('/Fingerprint').once('value');
+
+    user_fingerprint.forEach(row => {
+      fingerPrint.push({
+        fId: row.val().fId,
+        uId: row.val().uId
+      })
+    })
+
+    const uniqueResultOne = user.filter(function (obj) {
+      return fingerPrint.some(function (obj2) {
+        if (obj.uId == obj2.uId) {
+          obj.fId = obj2.fId
+          return obj;
+        }
+      });
+    })
+
+    const uniqueResulttwo = user.filter(function (obj) {
+      return !fingerPrint.some(function (obj2) {
+        return obj.uId == obj2.uId;
+      });
+    })
+
+    //Combine the two arrays of unique entries
+    const result = uniqueResultOne.concat(uniqueResulttwo);
+
+    const r = [];
+    const class_attendance = [];
+    classBySection.forEach(row_class => {
+      let date = row_class.date;
+      let class_id = row_class.id;
+      r.push(db.ref('/Attendance').orderByChild('class_id').equalTo(row_class.id).once('value')
+        .then(class_attan => {
+          class_attan.forEach(row => {
+            class_attendance.push({
+              id: row.key,
+              class_id: class_id,
+              checktime: row.val().checkTime,
+              fId: Number(row.val().fId),
+              open_time: date,
+              status: row.val().status
+            })
+          })
+        }));
+    })
+
+    await Promise.all(r);
+    const final = [];
+    let time;
+    const attandance = class_attendance.filter(function (obj) {
+      return result.some(function (obj2) {
+        if (obj.fId === obj2.fId) {
+          let class_date = obj.open_time
+          let checkInTime = moment.unix(obj.checktime).format('HH:mm');
+          if(obj.status === 'ONTIME' || obj.status === 'LATE'){
+            final.push({
+              uId: obj2.uId,
+              name: obj2.name + " " + obj2.surname,
+              date: class_date,
+              time: checkInTime,
+              status: obj.status
+            })
+          }
+          else{
+            final.push({
+              uId: obj2.uId,
+              name: obj2.name + " " + obj2.surname,
+              date: class_date,
+              time: "-",
+              status: obj.status
+            })
+          }
+         
+          return;
+        }
+      });
+    })
+
+    const unique = result.filter(f => {
+      return !class_attendance.some(attan => {
+        return attan.fId === f.fId;
+      })
+    })
+
+    const unattandance = unique.map(row => {
+      return {
+        uId: row.uId,
+        name: row.name + " " + row.surname,
+      }
+    })
+
+    const rr = final.concat(unattandance);
+    rr.sort((a, b) => a.uId - b.uId)
+
+
+
+    // console.log(final)
+    if (final.length === 0) {
+      final.push(user)
+    }
+    return res.status(200).json({
+      data: {
+        section: {
+          room: sections.val().room,
+          sId: sections.val().sId,
+          sectionNumber: sections.val().sectionNumber,
+          subject: sections.val().subject,
+          timelate: sections.val().timelate,
+          timetable: sections.val().timetable
+        },
+        classes: classBySection,
+        student: rr
+      }
+    })
+  }
+  catch (error) {
+    return res.status(500).json({
+      message: error.message,
+      status: {
+        dataStatus: "FAILURE"
+      }
+    })
+  }
+})
+
+app.get('/getAttandaceByStudent/:id', nisit_permission, async (req, res) => {
+
+  const section_id = req.params.id;
+
+  const student_data = await db.ref('/User').orderByChild('uId').equalTo(req.id).once('value');
+  const sections = await db.ref('/Section').child(section_id).once('value');
+  const student = [];
+
+  student_data.forEach(row => {
+    student.push({
+      uId: row.val().uId,
+      name: row.val().name + " " + row.val().surname
+    })
+  })
+
+  const list_class = await db.ref('/Class').orderByChild('sectionID').equalTo(section_id).once('value');
+  const classBySection = [];
+
+  list_class.forEach(row_class => {
+    let date = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('DD/MM/YYYY HH:mm')
+    classBySection.push({
+      id: row_class.key,
+      date: date
+    })
+  })
+
+  let fingerPrint = [];
+  const user_fingerprint = await db.ref('/Fingerprint').once('value');
+
+  user_fingerprint.forEach(row => {
+    fingerPrint.push({
+      fId: Number(row.val().fId),
+      uId: row.val().uId
+    })
+  })
+
+  const filterStudent = student.filter(st => {
+    return fingerPrint.some(f => {
+      if (f.uId === st.uId) {
+        st.fId = f.fId;
+        return st;
+      }
+    })
+  })
+
+  let r = [];
+  let class_attendance = [];
+  classBySection.forEach(row_class => {
+    let date = row_class.date;
+    let class_id = row_class.id;
+    r.push(db.ref('/Attendance').orderByChild('class_id').equalTo(row_class.id).once('value')
+      .then(class_attan => {
+        class_attan.forEach(row => {
+          class_attendance.push({
+            id: row.key,
+            class_id: class_id,
+            checktime: row.val().checkTime,
+            fId: Number(row.val().fId),
+            open_time: date,
+            status: row.val().status
+          })
+        })
+      }));
+  })
+
+  await Promise.all(r);
+  // console.log(class_attendance)
+  let final = [];
+
+  const attan = class_attendance.filter(attan => {
+    return filterStudent.filter(f => {
+      if (f.fId === attan.fId) {
+        let class_date = attan.open_time
+        let checkInTime = moment.unix(attan.checktime).format('HH:mm');
+        if(attan.status === 'ONTIME' || attan.status === 'LATE'){
+          final.push({
+            uId: f.uId,
+            name: f.name,
+            date: class_date,
+            time: checkInTime,
+            status: attan.status
+          })
+        }
+        else{
+          final.push({
+            uId: f.uId,
+            name: f.name,
+            date: class_date,
+            time: '-',
+            status: attan.status
+          })
+        }
+      }
+      return;
+    })
+  })
+
+  return res.status(200).json({
+    message: "Get Success",
+    data: {
+      sections: {
+        room: sections.val().room,
+        sId: sections.val().sId,
+        scId: sections.val().scId,
+        sectionNumber: sections.val().sectionNumber,
+        subject: sections.val().subject,
+        timelate: sections.val().timelate,
+        timetable: sections.val().timetable,
+      },
+      classes: classBySection,
+      student: final
+    }
+  })
+})
+
+
+
+app.get('/export/:id', async (req, res) => {
+
+  const section_id = req.params.id;
+  const classBySection = [];
+
+  try {
+    let columns = [
+      {
+        label: 'รหัสนิสิต',
+        value: 'รหัสนิสิต'
+      },
+      {
+        label: 'ชื่อ-นามสกุล',
+        value: row => row["ชื่อ-นามสกุล"]
+      }
+    ];
+
+    const sections = await db.ref('/Section').child(section_id).once('value');
+    const timelate = sections.val().timelate;
+    const list_class = await db.ref('/Class').orderByChild('sectionID').equalTo(section_id).once('value');
+    const promise = [];
+
+    list_class.forEach(row_class => {
+      let date = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('DD/MM/YYYY HH:mm:ss');
+      // let time = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('HH:mm:ss');
+      classBySection.push({
+        id: row_class.key,
+        date: date,
+        // time: time
+      })
+      columns.push({ label: `${date}`, value: `${date}` })
+    })
+    const user = [];
+
     await db.ref('/Regis').orderByChild('sId').equalTo(section_id)
       .once('value')
       .then((registration) => {
@@ -749,10 +1046,10 @@ app.get('/getAttandace/:id', async (req, res) => {
     const r = [];
     const class_attendance = [];
     classBySection.forEach(row_class => {
-      let date = row_class.date;
-      let class_id = row_class.id;
       r.push(db.ref('/Attendance').orderByChild('class_id').equalTo(row_class.id).once('value')
         .then(class_attan => {
+          let date = row_class.date;
+          let class_id = row_class.id;
           class_attan.forEach(row => {
             class_attendance.push({
               id: row.key,
@@ -765,21 +1062,37 @@ app.get('/getAttandace/:id', async (req, res) => {
           })
         }));
     })
-
     await Promise.all(r);
     const final = [];
-    
+    let arrive, late, absent;
+    let checkInTime;
     const attandance = class_attendance.filter(function (obj) {
+      arrive = 0
+      late = 0
+      absent = 0
       return result.some(function (obj2) {
-        if (obj.fId === obj2.fId) {
+        if (obj.fId == obj2.fId) {
           let class_date = obj.open_time
-          let checkInTime = moment.unix(obj.checktime).format('HH:mm');
+          if (obj.status === "ONTIME") {
+            arrive = 1;
+            checkInTime = moment.unix(obj.checktime).format('HH:mm');
+          }
+          else if (obj.status === "LATE") {
+            late = 1;
+            checkInTime = moment.unix(obj.checktime).format('HH:mm');
+          }
+          else {
+            absent = 1;
+            checkInTime = "-";
+          }
           final.push({
-             uId : obj2.uId,
-             name: obj2.name + " " + obj2.surname,
-             date: class_date,
-             time : checkInTime,
-             status: obj.status
+            [`รหัสนิสิต`]: obj2.uId,
+            [`ชื่อ-นามสกุล`]: obj2.name + " " + obj2.surname,
+            [`${class_date}`]: checkInTime,
+            status: obj.status,
+            [`มา`]: arrive,
+            [`สาย`]: late,
+            [`ขาด`]: absent
           })
           return;
         }
@@ -791,47 +1104,322 @@ app.get('/getAttandace/:id', async (req, res) => {
         return attan.fId === f.fId;
       })
     })
+    console.log(final)
 
     const unattandance = unique.map(row => {
       return {
-        uId: row.uId,
-        name: row.name + " " + row.surname,
+        [`รหัสนิสิต`]: row.uId,
+        [`ชื่อ-นามสกุล`]: row.name + " " + row.surname,
       }
     })
-
     const rr = final.concat(unattandance);
 
-    
-    
-
-    // console.log(final)
-    if (final.length === 0) {
-      final.push(user)
+    Object.byString = function (o, s) {
+      s = s.replace(/\[(\w+)\]/g, '.$1'); // convert indexes to properties
+      s = s.replace(/^\./, '');           // strip a leading dot
+      var a = s.split('.');
+      for (var i = 0, n = a.length; i < n; ++i) {
+        var k = a[i];
+        if (k in o) {
+          o = o[k];
+        } else {
+          return;
+        }
+      }
+      return o;
     }
-    return res.status(200).json({
-      data: {
-        section: {
-          room: sections.val().room,
-          sId: sections.val().sId,
-          sectionNumber: sections.val().sectionNumber,
-          subject: sections.val().subject,
-          timelate: sections.val().timelate,
-          timetable: sections.val().timetable
-        },
-        classes: classBySection,
-        student: rr
+
+    const newArray = new Map();
+    rr.forEach(row => {
+      let uid = Object.byString(row, `รหัสนิสิต`)
+      if (newArray.has(uid)) {
+        let r = newArray.get(uid);
+        r["มา"] += row["มา"]
+        r["สาย"] += row["สาย"]
+        r["ขาด"] += row["ขาด"]
+        newArray.set(uid, Object.assign({}, row, r))
+      }
+      else {
+        newArray.set(uid, row);
       }
     })
+    const re = Array.from(newArray.values())
+    console.log(re)
+    columns.push({ label: 'มา', value: 'มา' }, { label: 'ขาด', value: 'ขาด' }, { label: 'สาย', value: 'สาย' })
+    re.sort((a, b) => a["รหัสนิสิต"] - b["รหัสนิสิต"]);
+    let setting = {
+      sheetName: `WorkSheet1`,
+      fileName: `${sections.val().subject}_${sections.val().sectionNumber}`,
+    }
+    let file = exportXls(columns, re, setting);
+    res.setHeader(
+      "Content-disposition",
+      `attachment; filename=${sections.val().subject}_${sections.val().sectionNumber}.xlsx`,
+    )
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.end(new Buffer(file, 'base64'))
+
   }
   catch (error) {
     return res.status(500).json({
-      message: error.message,
-      status: {
-        dataStatus: "FAILURE"
-      }
+      message: error.message
     })
   }
 })
+
+app.post('/Attandance', async (req, res) => {
+  const zone = "Asia/Bangkok";
+  
+  try{
+  const checkTime = moment(new Date()).tz(zone).format('X');
+  const classForSection = await db.ref('/Attendance').orderByChild('class_id').equalTo(req.body.class_id).once('value')
+
+  let exists;
+  classForSection.forEach(row => {
+    if (row.val().fId == req.body.fId) {
+      exists = true;
+    }
+  })
+  if (exists) {
+    return res.status(500).json({
+      message: "ไม่สามารถเชคได้ เนื่องจาก นิสิตคนนี้เชคชื่อเรียบร้อยแล้ว"
+    })
+  }
+  else {
+    const classes = await db.ref('/Class').child(req.body.class_id).once('value');
+    const section_id = classes.val().sectionID;
+    let open_time = Number(classes.val().dateTime);
+    await db.ref('/Section').child(section_id).once('value')
+      .then(async sections => {
+        let timelate = Number(sections.val().timelate);
+        let timelost = 60;
+        let time = moment.unix(open_time)
+        let diff = moment(time, "DD/MM/YYYY HH:mm:ss").diff(moment(new Date(), "DD/MM/YYYY HH:mm:ss"));
+        
+        const d = moment.duration(Math.abs(diff));
+        const minutes = (d.hours() * 60) + d.minutes();
+
+        if (Number(minutes) < timelate) {
+          await db.ref('/Attendance').push({
+            fId: Number(req.body.fId),
+            scId: req.body.scId,
+            class_id: req.body.class_id,
+            checkTime: checkTime,
+            status: "ONTIME"
+          })
+        }
+        else {
+          await db.ref('/Attendance').push({
+            fId: Number(req.body.fId),
+            scId: req.body.scId,
+            class_id: req.body.class_id,
+            checkTime: checkTime,
+            status: "LATE"
+          })
+        }
+        return res.status(201).json({
+          message:"Attandance Success",
+          status:{
+            dataStatus:"SUCCESS"
+          }
+        })
+      })
+  }
+}catch(err){
+  return res.status(500).json({
+    message:err.message,
+    status:{
+      dataStatus:"FAILURE"
+    }
+  })
+}
+
+})
+
+app.get('/getAttandaceByStudent/:id', nisit_permission, async (req, res) => {
+
+  const section_id = req.params.id;
+
+  const student_data = await db.ref('/User').orderByChild('uId').equalTo(req.id).once('value');
+  const sections = await db.ref('/Section').child(section_id).once('value');
+  const student = [];
+
+  student_data.forEach(row => {
+    student.push({
+      uId: row.val().uId,
+      name: row.val().name + " " + row.val().surname
+    })
+  })
+
+  const list_class = await db.ref('/Class').orderByChild('sectionID').equalTo(section_id).once('value');
+  const classBySection = [];
+
+  list_class.forEach(row_class => {
+    let date = moment.unix(row_class.val().dateTime).tz('Asia/Bangkok').format('DD/MM/YYYY HH:mm')
+    classBySection.push({
+      id: row_class.key,
+      date: date
+    })
+  })
+
+  let fingerPrint = [];
+  const user_fingerprint = await db.ref('/Fingerprint').once('value');
+
+  user_fingerprint.forEach(row => {
+    fingerPrint.push({
+      fId: Number(row.val().fId),
+      uId: row.val().uId
+    })
+  })
+
+  const filterStudent = student.filter(st => {
+    return fingerPrint.some(f => {
+      if (f.uId === st.uId) {
+        st.fId = f.fId;
+        return st;
+      }
+    })
+  })
+
+  let r = [];
+  let class_attendance = [];
+  classBySection.forEach(row_class => {
+    let date = row_class.date;
+    let class_id = row_class.id;
+    r.push(db.ref('/Attendance').orderByChild('class_id').equalTo(row_class.id).once('value')
+      .then(class_attan => {
+        class_attan.forEach(row => {
+          class_attendance.push({
+            id: row.key,
+            class_id: class_id,
+            checktime: row.val().checkTime,
+            fId: Number(row.val().fId),
+            open_time: date,
+            status: row.val().status
+          })
+        })
+      }));
+  })
+
+  await Promise.all(r);
+  // console.log(class_attendance)
+  let final = [];
+
+  const attan = class_attendance.filter(attan => {
+    return filterStudent.filter(f => {
+      if (f.fId === attan.fId) {
+        let class_date = attan.open_time
+        let checkInTime = moment.unix(attan.checktime).format('HH:mm');
+        final.push({
+          uId: f.uId,
+          name: f.name,
+          date: class_date,
+          time: checkInTime,
+          status: attan.status
+        })
+      }
+      return;
+    })
+  })
+
+  return res.status(200).json({
+    message: "Get Success",
+    data: {
+      sections: {
+        room: sections.val().room,
+        sId: sections.val().sId,
+        scId: sections.val().scId,
+        sectionNumber: sections.val().sectionNumber,
+        subject: sections.val().subject,
+        timelate: sections.val().timelate,
+        timetable: sections.val().timetable,
+      },
+      classes: classBySection,
+      student: final
+    }
+  })
+})
+
+
+// API สำหรับอุปกรณ์ตอนเปิด Class
+app.post('/OpenClass', async (req, res) => {
+
+  const date_open = moment(new Date()).tz('Asia/Bangkok').format('X');
+  const sectionID = req.body.sectionID;
+  const scId = req.body.scId;
+
+  let class_id;
+  await db.ref('/Class').push({
+    dateTime: Number(date_open),
+    sectionID: sectionID,
+    scId : scId
+  })
+    .then((resp) => {
+      class_id = resp.key;
+    })
+
+  let promise = [];
+  let user = [];
+
+  await db.ref('/Regis').orderByChild('sId').equalTo(sectionID)
+    .once('value')
+    .then((registration) => {
+      registration.forEach(row => {
+        promise.push(db.ref('/User').orderByChild('uId').equalTo(row.val().uId).once('value')
+          .then(users => {
+            users.forEach(row_user => {
+              user.push({
+                id: row_user.key,
+                name: row_user.val().name,
+                surname: row_user.val().surname,
+                uId: row_user.val().uId
+              })
+            })
+          }))
+      })
+    })
+
+  await Promise.all(promise);
+
+  const fingerPrint = [];
+  const user_fingerprint = await db.ref('/Fingerprint').once('value')
+
+  user_fingerprint.forEach(row => {
+    fingerPrint.push({
+      fId: row.val().fId,
+      uId: row.val().uId
+    })
+  })
+
+  const uniqueResultOne = user.filter(function (obj) {
+    return fingerPrint.some(function (obj2) {
+      if (obj.uId == obj2.uId) {
+        obj.fId = obj2.fId
+        return obj;
+      }
+    });
+  })
+
+  uniqueResultOne.sort((a, b) => a.uId - b.uId)
+
+  let p2 = [];
+  uniqueResultOne.forEach(user => {
+    p2.push(db.ref('/Attendance').push({
+      fId: user.fId,
+      class_id: class_id,
+      status: "ABSENT",
+      checkTime: '-'
+    }))
+  })
+  await Promise.all(p2);
+  return res.status(201).json({
+    message: "OPEN CLASS SUCCESS",
+    status: {
+      dataStatus: "SUCCESS"
+    }
+  })
+})
+
 exports.api = functions.https.onRequest(app)
 
 
